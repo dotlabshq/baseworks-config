@@ -1,0 +1,38 @@
+{
+  "name": "@baseworks/config",
+  "version": "0.1.1",
+  "description": "Lightweight layered config loader for CLI tools and services — TOML (default), YAML or JSON, per-file by extension, project-local over global.",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "smol-toml": "^1.3.1",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@baseworks/tsconfig": "workspace:*",
+    "@types/node": "^22.20.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}
