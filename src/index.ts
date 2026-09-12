@@ -9,11 +9,26 @@
  *   2. {home}/.{appName}/config.{toml|yaml|yml|json}  — global fallback
  *
  * In layered mode both files are loaded and deep-merged (project-local wins).
+ *
+ * Config files routinely hold credentials — an identity JWT, an API token — so
+ * every write here is private by default: the directory is created `0700`, the
+ * file is written `0600`, and the write goes through a temporary file that is
+ * renamed into place. The rename matters: `writeFileSync`'s `mode` option only
+ * applies when the file is CREATED, so writing over an existing world-readable
+ * file would silently leave it world-readable.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join, resolve as resolvePath } from 'node:path'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
@@ -29,6 +44,24 @@ export interface ConfigManagerOptions {
   format?: ConfigFormat
   /** Load + deep-merge global and project-local (local wins). @default false */
   layered?: boolean
+  /**
+   * Where config may live.
+   *
+   * - `'auto'` (default) — project-local `./.{app}/` when present, else global.
+   * - `'global'` — only `~/.{app}/`. Use this when the file holds credentials:
+   *   a project-local config sits inside a working tree and is one careless
+   *   `git add` away from being committed.
+   *
+   * @default 'auto'
+   */
+  scope?: 'auto' | 'global'
+  /**
+   * Permission bits for the config file. Lower it further if you must; raising
+   * it above `0o600` is almost always a mistake for a file holding secrets.
+   *
+   * @default 0o600
+   */
+  fileMode?: number
 }
 
 export interface ConfigManager<T extends AnyRecord> {
@@ -84,6 +117,37 @@ function readFile(filePath: string): { data: AnyRecord; format: ConfigFormat } |
   return null
 }
 
+const DIR_MODE = 0o700
+const FILE_MODE = 0o600
+
+/**
+ * Write a file privately and atomically.
+ *
+ * The temp file is created with `wx` so a stale temp from a crashed run can
+ * never be reused with its old permissions, and `rename` carries the temp
+ * file's mode onto the target — which is how an existing loose-moded file gets
+ * tightened rather than silently kept loose.
+ *
+ * An existing directory's mode is left alone: tightening a directory somebody
+ * else created is a surprising side effect, and the file's own `0600` is what
+ * actually protects the contents.
+ */
+function writePrivate(target: string, contents: string, fileMode: number = FILE_MODE): void {
+  mkdirSync(dirname(target), { recursive: true, mode: DIR_MODE })
+  const tmp = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
+  try {
+    writeFileSync(tmp, contents, { mode: fileMode, flag: 'wx' })
+    renameSync(tmp, target)
+  } catch (err) {
+    try {
+      unlinkSync(tmp)
+    } catch {
+      // cleanup is best-effort; the original error is what matters
+    }
+    throw err
+  }
+}
+
 function deepMerge<T extends AnyRecord>(base: T, override: Partial<T>): T {
   const result = { ...base }
   for (const key of Object.keys(override) as (keyof T)[]) {
@@ -114,6 +178,8 @@ export function createConfigManager<T extends AnyRecord>(
 ): ConfigManager<T> {
   const format = options.format ?? 'toml'
   const layered = options.layered ?? false
+  const globalOnly = (options.scope ?? 'auto') === 'global'
+  const fileMode = options.fileMode ?? FILE_MODE
   const e = ext(format)
 
   const globalDir = join(homedir(), `.${appName}`)
@@ -122,12 +188,17 @@ export function createConfigManager<T extends AnyRecord>(
   const getLocalFile = (): string => join(process.cwd(), `.${appName}`, `config.${e}`)
 
   function getWritePath(): string {
+    if (globalOnly) return globalFile
     const localFile = getLocalFile()
     const localDir = join(process.cwd(), `.${appName}`)
     return existsSync(localFile) || existsSync(localDir) ? localFile : globalFile
   }
 
   function load(): T {
+    if (globalOnly) {
+      const only = readFile(globalFile)
+      return only ? deepMerge({ ...defaults }, only.data as Partial<T>) : { ...defaults }
+    }
     if (layered) {
       let cfg = { ...defaults }
       const global_ = readFile(globalFile)
@@ -145,10 +216,8 @@ export function createConfigManager<T extends AnyRecord>(
 
   function save(cfg: T): void {
     const target = getWritePath()
-    const dir = target.replace(/\/[^/]+$/, '')
-    mkdirSync(dir, { recursive: true })
     const targetFormat = existsSync(target) ? detectFormat(target) : format
-    writeFileSync(target, serialize(cfg as AnyRecord, targetFormat))
+    writePrivate(target, serialize(cfg as AnyRecord, targetFormat), fileMode)
   }
 
   function patch(partial: Partial<T>): void {
@@ -187,12 +256,13 @@ export function loadConfigFile<T extends AnyRecord>(filePath: string, defaults: 
   return deepMerge({ ...defaults }, result.data as Partial<T>)
 }
 
-/** Write a config object to a file. Format is inferred from the extension. */
-export function saveConfigFile(filePath: string, cfg: AnyRecord): void {
+/**
+ * Write a config object to a file. Format is inferred from the extension.
+ * Private by default (`0600`); pass `mode` to widen it deliberately.
+ */
+export function saveConfigFile(filePath: string, cfg: AnyRecord, options: { mode?: number } = {}): void {
   const resolved = filePath.startsWith('~/') ? join(homedir(), filePath.slice(2)) : resolvePath(filePath)
-  const dir = resolved.replace(/\/[^/]+$/, '')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(resolved, serialize(cfg, detectFormat(resolved)))
+  writePrivate(resolved, serialize(cfg, detectFormat(resolved)), options.mode ?? FILE_MODE)
 }
 
 export { deepMerge }

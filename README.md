@@ -52,19 +52,50 @@ cfg.patch({ db: 'libsql://…' })      // merge + persist to the active file
 | `clearLocal()` | delete the project-local file |
 | `writePath` / `globalPath` / `localPath` | resolved absolute paths |
 
-Options: `format` (`'toml'` \| `'yaml'` \| `'json'`, default `'toml'`) ·
-`layered` (default `false`).
+Options:
+
+| option | default | meaning |
+|---|---|---|
+| `format` | `'toml'` | Format for *new* files (`'toml'` \| `'yaml'` \| `'json'`) |
+| `layered` | `false` | Load both files and deep-merge; local wins |
+| `scope` | `'auto'` | `'global'` restricts everything to `~/.{app}/` |
+| `fileMode` | `0o600` | Permission bits for the config file |
 
 **Explicit-path helpers** (no app-name convention):
 
 ```ts
-import { loadConfigFile, writeConfigFile } from '@baseworks/config'
+import { loadConfigFile, saveConfigFile } from '@baseworks/config'
 
 const c = loadConfigFile('~/.myapp/settings.yaml', { theme: 'dark' })
-writeConfigFile('./out/config.toml', c)   // format inferred from the extension
+saveConfigFile('./out/config.toml', c)   // format inferred from the extension
 ```
 
 `deepMerge(base, override)` is exported too, for merging config-shaped objects.
+
+## Credentials
+
+Config files routinely hold an identity JWT or an API token, so **every write is
+private by default**: the directory is created `0700`, the file is written
+`0600`, and the write goes through a temporary file that is renamed into place.
+
+The rename is not decoration. `writeFileSync`'s `mode` option applies only when
+the file is *created*, so writing over an existing world-readable config would
+silently leave it world-readable — on a shared machine or a CI runner, readable
+by everyone. Renaming a `0600` temp file over the target tightens it instead.
+
+An existing *directory's* mode is left alone: tightening a directory someone
+else created is a surprising side effect, and the file's own `0600` is what
+protects the contents.
+
+For anything holding credentials, also pass `scope: 'global'`:
+
+```ts
+const cfg = createConfigManager<Creds>('myapp', {}, { scope: 'global' })
+```
+
+Without it, a `./.myapp/` directory in the current working tree wins — which
+puts a token inside a repository, one careless `git add` away from being
+committed.
 
 ## Formats
 

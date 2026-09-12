@@ -1,5 +1,5 @@
 {
-  "extends": "../../lib/tsconfig/node.json",
+  "extends": "@baseworks/tsconfig/node",
   "compilerOptions": {
     "outDir": "./dist"
   },
