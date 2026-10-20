@@ -11,7 +11,7 @@ minor: build
     npm version minor --no-git-tag-version
 
 publish: build
-    npm publish --access public
+    pnpm publish --access public
 
 release-patch:
     just patch

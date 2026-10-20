@@ -1,6 +1,6 @@
 {
   "name": "@baseworks/config",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Lightweight layered config loader for CLI tools and services — TOML (default), YAML or JSON, per-file by extension, project-local over global.",
   "type": "module",
   "publishConfig": {
